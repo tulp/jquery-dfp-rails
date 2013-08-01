@@ -1,0 +1,3 @@
+[submodule "jquery.dfp.js"]
+	path = jquery.dfp.js
+	url = https://github.com/coop182/jquery.dfp.js

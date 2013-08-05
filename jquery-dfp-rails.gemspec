@@ -14,7 +14,7 @@ Gem::Specification.new do |s|
   s.description = "Adapter for https://github.com/coop182/jquery.dfp.js"
   s.license     = 'MIT'
 
-  s.files = Dir["{vendor,config,lib}/**/*"] + ["MIT-LICENSE", "Rakefile", "README.rdoc"]
+  s.files = Dir["{vendor,config,lib}/**/*"] + ["MIT-LICENSE", "Rakefile", "README.md"]
   s.test_files = Dir["test/**/*"]
 
   s.add_dependency "rails", ">= 3.1.0"

@@ -6,7 +6,7 @@ This gem packages the [jQuery DFP](https://github.com/coop182/jquery.dfp.js) 1.0
 In your Gemfile, add:
 
 ```ruby
-gem 'jquery-dfp-rails'
+gem 'jquery-dfp-rails', github: 'tulp/jquery-dfp-rails'
 ```
 
 In your application.js file, add:

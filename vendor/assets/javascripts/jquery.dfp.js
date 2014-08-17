@@ -1,13 +1,13 @@
 /**
- * jQuery DFP v1.0.16
+ * jQuery DFP v1.1.3
  * http://github.com/coop182/jquery.dfp.js
  *
- * Copyright 2013 Matt Cooper
+ * Copyright 2014 Matt Cooper
  * Released under the MIT license
  */
 (function ($, window, undefined) {
 
-    "use strict";
+    'use strict';
 
     var
 
@@ -17,10 +17,9 @@
     // DFP account ID
     dfpID = '',
 
-    // Count of ads
+    // Init counters
     count = 0,
-
-    // Count of rendered ads
+    uid = 0,
     rendered = 0,
 
     // Default DFP selector
@@ -46,6 +45,10 @@
      */
     init = function (id, selector, options) {
 
+        // Reset counters on each call
+        count = 0;
+        rendered = 0;
+
         dfpID = id;
         $adCollection = $(selector);
 
@@ -65,24 +68,27 @@
      */
     setOptions = function (options) {
 
-        // Get URL Targeting
-        var URLTargets = getURLTargets();
-
         // Set default options
         dfpOptions = {
-            setTargeting: {
-                inURL: URLTargets.inURL,
-                URLIs: URLTargets.URLIs,
-                Query: URLTargets.Query,
-                Domain: window.location.host
-            },
+            setTargeting: {},
             setCategoryExclusion: '',
+            setLocation: '',
             enableSingleRequest: true,
             collapseEmptyDivs: 'original',
-            targetPlatform: 'web',
-            enableSyncRendering: false,
-            refreshExisting: true
+            refreshExisting: true,
+            disablePublisherConsole: false,
+            disableInitialLoad: false,
+            noFetch: false,
+            namespace: undefined,
+            sizeMapping: {}
         };
+
+        if (typeof options.setUrlTargeting === 'undefined' || options.setUrlTargeting)
+        {
+            // Get URL Targeting
+            var urlTargeting = getUrlTargeting();
+            $.extend(true, dfpOptions.setTargeting, { inURL: urlTargeting.inURL, URLIs: urlTargeting.URLIs, Query: urlTargeting.Query, Domain: window.location.host });
+        }
 
         // Merge options objects
         $.extend(true, dfpOptions, options);
@@ -93,7 +99,6 @@
                 $.extend(true, window.googletag, dfpOptions.googletag);
             });
         }
-
     },
 
     /**
@@ -113,13 +118,13 @@
             var adUnitName = getName($adUnit);
 
             // adUnit id - this will use an existing id or an auto generated one.
-            var adUnitID = getID($adUnit, adUnitName, count);
+            var adUnitID = getID($adUnit, adUnitName);
 
             // get dimensions of the adUnit
             var dimensions = getDimensions($adUnit);
 
-            // get existing content
-            var $existingContent = $adUnit.html();
+            // set existing content
+            $adUnit.data('existingContent', $adUnit.html());
 
             // wipe html clean ready for ad and set the default display class.
             $adUnit.html('').addClass('display-none');
@@ -147,7 +152,7 @@
                 }
 
                 // Sets custom targeting for just THIS ad unit if it has been specified
-                var targeting = $adUnit.data("targeting");
+                var targeting = $adUnit.data('targeting');
                 if (targeting) {
                     $.each(targeting, function (k, v) {
                         googleAdUnit.setTargeting(k, v);
@@ -155,7 +160,7 @@
                 }
 
                 // Sets custom exclusions for just THIS ad unit if it has been specified
-                var exclusions = $adUnit.data("exclusions");
+                var exclusions = $adUnit.data('exclusions');
                 if (exclusions) {
                     var exclusionsGroup = exclusions.split(',');
                     var valueTrimmed;
@@ -167,41 +172,24 @@
                     });
                 }
 
-                // The following hijacks an internal google method to check if the div has been
-                // collapsed after the ad has been attempted to be loaded.
-                googleAdUnit.oldRenderEnded = googleAdUnit.oldRenderEnded || googleAdUnit.renderEnded;
-                googleAdUnit.renderEnded = function () {
-
-                    rendered++;
-
-                    var display = $adUnit.css('display');
-
-                    // if the div has been collapsed but there was existing content expand the
-                    // div and reinsert the existing content.
-                    if (display === 'none' && $.trim($existingContent).length > 0 && dfpOptions.collapseEmptyDivs === 'original') {
-                        $adUnit.show().html($existingContent);
-                        display = 'block display-original';
-                    }
-
-                    $adUnit.removeClass('display-none').addClass('display-' + display);
-
-                    googleAdUnit.oldRenderEnded();
-
-                    // Excute afterEachAdLoaded callback if provided
-                    if (typeof dfpOptions.afterEachAdLoaded === 'function') {
-                        dfpOptions.afterEachAdLoaded.call(this, $adUnit);
-                    }
-
-                    // Excute afterAllAdsLoaded callback if provided
-                    if (typeof dfpOptions.afterAllAdsLoaded === 'function' && rendered === count) {
-                        dfpOptions.afterAllAdsLoaded.call(this, $adCollection);
-                    }
-
-                };
+                // Sets responsive size mapping for just THIS ad unit if it has been specified
+                var mapping = $adUnit.data('size-mapping');
+                if (mapping && dfpOptions.sizeMapping[mapping]) {
+                    // Convert verbose to DFP format
+                    var map = window.googletag.sizeMapping();
+                    $.each(dfpOptions.sizeMapping[mapping], function(k, v) {
+                        map.addSize(v.browser, v.ad_sizes);
+                    });
+                    googleAdUnit.defineSizeMapping(map.build());
+                }
 
                 // Store googleAdUnit reference
                 $adUnit.data(storeAs, googleAdUnit);
 
+                // Allow altering of the ad slot before ad load
+                if (typeof dfpOptions.beforeEachAdLoaded === 'function') {
+                    dfpOptions.beforeEachAdLoaded.call(this, $adUnit);
+                }
             });
 
         });
@@ -209,12 +197,21 @@
         // Push DFP config options
         window.googletag.cmd.push(function () {
 
-            if (dfpOptions.enableSingleRequest === true) {
+            if (dfpOptions.enableSingleRequest) {
                 window.googletag.pubads().enableSingleRequest();
             }
             $.each(dfpOptions.setTargeting, function (k, v) {
                 window.googletag.pubads().setTargeting(k, v);
             });
+
+            if (typeof dfpOptions.setLocation === 'object') {
+                if (typeof dfpOptions.setLocation.latitude === 'number' && typeof dfpOptions.setLocation.longitude === 'number' && typeof dfpOptions.setLocation.precision === 'number') {
+                    window.googletag.pubads().setLocation(dfpOptions.setLocation.latitude, dfpOptions.setLocation.longitude, dfpOptions.setLocation.precision);
+                } else if (typeof dfpOptions.setLocation.latitude === 'number' && typeof dfpOptions.setLocation.longitude === 'number') {
+                    window.googletag.pubads().setLocation(dfpOptions.setLocation.latitude, dfpOptions.setLocation.longitude);
+                }
+            }
+
             if (dfpOptions.setCategoryExclusion.length > 0) {
                 var exclusionsGroup = dfpOptions.setCategoryExclusion.split(',');
                 var valueTrimmed;
@@ -225,9 +222,53 @@
                     }
                 });
             }
-            if (dfpOptions.collapseEmptyDivs === true || dfpOptions.collapseEmptyDivs === 'original') {
+            if (dfpOptions.collapseEmptyDivs) {
                 window.googletag.pubads().collapseEmptyDivs();
             }
+
+            if (dfpOptions.disablePublisherConsole) {
+                window.googletag.pubads().disablePublisherConsole();
+            }
+
+            if (dfpOptions.disableInitialLoad) {
+                window.googletag.pubads().disableInitialLoad();
+            }
+
+            if (dfpOptions.noFetch) {
+                window.googletag.pubads().noFetch();
+            }
+
+            // Setup event listener to listen for renderEnded event and fire callbacks.
+            window.googletag.pubads().addEventListener('slotRenderEnded', function(event) {
+
+                rendered++;
+
+                var $adUnit = $('#' + event.slot.getSlotId().getDomId());
+
+                var display = event.isEmpty ? 'none' : 'block';
+
+                // if the div has been collapsed but there was existing content expand the
+                // div and reinsert the existing content.
+                var $existingContent = $adUnit.data('existingContent');
+                if (display === 'none' && $.trim($existingContent).length > 0 && dfpOptions.collapseEmptyDivs === 'original') {
+                    $adUnit.show().html($existingContent);
+                    display = 'block display-original';
+                }
+
+                $adUnit.removeClass('display-none').addClass('display-' + display);
+
+                // Excute afterEachAdLoaded callback if provided
+                if (typeof dfpOptions.afterEachAdLoaded === 'function') {
+                    dfpOptions.afterEachAdLoaded.call(this, $adUnit, event);
+                }
+
+                // Excute afterAllAdsLoaded callback if provided
+                if (typeof dfpOptions.afterAllAdsLoaded === 'function' && rendered === count) {
+                    dfpOptions.afterAllAdsLoaded.call(this, $adCollection);
+                }
+
+            });
+
             window.googletag.enableServices();
 
         });
@@ -263,7 +304,7 @@
      * Create an array of paths so that we can target DFP ads to Page URI's
      * @return Array an array of URL parts that can be targeted.
      */
-    getURLTargets = function () {
+    getUrlTargeting = function () {
 
         // Get the paths for targeting against
         var paths = window.location.pathname.replace(/\/$/, ''),
@@ -296,7 +337,7 @@
 
         // Get the query params for targeting against
         var url = window.location.toString().replace(/\=/ig, ':').match(/\?(.+)$/),
-            params = RegExp.$1.split("&");
+            params = RegExp.$1.split('&');
 
         return {
             inURL: targetPaths,
@@ -310,12 +351,12 @@
      * Get the id of the adUnit div or generate a unique one.
      * @param  Object $adUnit     The adunit to work with
      * @param  String adUnitName The name of the adunit
-     * @param  Integer count     The current count of adunit, for uniqueness
      * @return String             The ID of the adunit or a unique autogenerated ID
      */
-    getID = function ($adUnit, adUnitName, count) {
+    getID = function ($adUnit, adUnitName) {
 
-        return $adUnit.attr('id') || $adUnit.attr('id', adUnitName + '-auto-gen-id-' + count).attr('id');
+        uid++;
+        return $adUnit.attr('id') || $adUnit.attr('id', adUnitName.replace(/[^A-z0-9]/g, '_') + '-auto-gen-id-' + uid).attr('id');
 
     },
 
@@ -327,7 +368,12 @@
      */
     getName = function ($adUnit) {
 
-        return $adUnit.data('adunit') || $adUnit.attr('id');
+        var adUnitName = $adUnit.data('adunit') || dfpOptions.namespace || $adUnit.attr('id') || '';
+        adUnitName = adUnitName.replace(/\//g, '//');
+        if (typeof dfpOptions.alterAdUnitName === 'function') {
+          adUnitName = dfpOptions.alterAdUnitName.call(this, adUnitName, $adUnit);
+        }
+        return adUnitName;
 
     },
 
@@ -417,6 +463,15 @@
         // SetTimeout is a bit dirty but the script does not execute in the correct order without it
         setTimeout(function () {
 
+            var _defineSlot = function (name, dimensions, id, oop) {
+                window.googletag.ads.push(id);
+                window.googletag.ads[id] = {
+                    renderEnded: function () { },
+                    addService: function () { return this; }
+                };
+                return window.googletag.ads[id];
+            };
+
             // overwrite the dfp object - replacing the command array with a function and defining missing functions
             window.googletag = {
                 cmd: {
@@ -426,25 +481,18 @@
                 },
                 ads: [],
                 pubads: function () { return this; },
+                noFetch:function () { return this; },
+                disableInitialLoad: function () { return this; },
+                disablePublisherConsole: function () { return this; },
                 enableSingleRequest: function () { return this; },
                 setTargeting: function () { return this; },
                 collapseEmptyDivs: function () { return this; },
                 enableServices: function () { return this; },
                 defineSlot: function (name, dimensions, id) {
-                    window.googletag.ads.push(id);
-                    window.googletag.ads[id] = {
-                        renderEnded: function () {},
-                        addService: function () { return this; }
-                    };
-                    return window.googletag.ads[id];
+                    return _defineSlot(name, dimensions, id, false);
                 },
                 defineOutOfPageSlot: function (name, id) {
-                    window.googletag.ads.push(id);
-                    window.googletag.ads[id] = {
-                        renderEnded: function () {},
-                        addService: function () { return this; }
-                    };
-                    return window.googletag.ads[id];
+                    return _defineSlot(name, [], id, true);
                 },
                 display: function (id) {
                     window.googletag.ads[id].renderEnded.call(dfpScript);
